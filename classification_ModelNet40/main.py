@@ -16,6 +16,7 @@ from torch.utils.data import DataLoader
 import models as models
 from utils import Logger, mkdir_p, progress_bar, save_model, save_args, cal_loss
 from data import ModelNet40
+from course_train_data import CourseModelNet40
 from torch.optim.lr_scheduler import CosineAnnealingLR
 import sklearn.metrics as metrics
 import numpy as np
@@ -36,7 +37,46 @@ def parse_args():
     parser.add_argument('--weight_decay', type=float, default=2e-4, help='decay rate')
     parser.add_argument('--seed', type=int, help='random seed')
     parser.add_argument('--workers', default=8, type=int, help='workers')
+    parser.add_argument('--data_format', choices=['h5', 'txt'], default='h5',
+                        help='h5 keeps upstream ModelNet40 behavior; txt reads Pointcept/BUPT normal-resampled layout')
+    parser.add_argument('--data_root', default='data/modelnet40_normal_resampled',
+                        help='root for txt data_format; accepts modelnet40_normal_resampled or its parent')
+    parser.add_argument('--split_ratio', default=0.8, type=float,
+                        help='per-class train split ratio for txt data_format')
+    parser.add_argument('--use_normals', action='store_true',
+                        help='return xyz+normal channels for txt data; official pointMLP should leave this false')
+    parser.add_argument('--normalize', action='store_true',
+                        help='center xyz and scale each txt sample to unit sphere')
     return parser.parse_args()
+
+
+def build_dataloaders(args):
+    if args.data_format == 'h5':
+        train_set = ModelNet40(partition='train', num_points=args.num_points)
+        test_set = ModelNet40(partition='test', num_points=args.num_points)
+    else:
+        train_set = CourseModelNet40(
+            args.data_root,
+            split='train',
+            num_points=args.num_points,
+            split_ratio=args.split_ratio,
+            use_normals=args.use_normals,
+            normalize=args.normalize,
+        )
+        test_set = CourseModelNet40(
+            args.data_root,
+            split='test',
+            num_points=args.num_points,
+            split_ratio=args.split_ratio,
+            use_normals=args.use_normals,
+            normalize=args.normalize,
+            augment=False,
+        )
+    train_loader = DataLoader(train_set, num_workers=args.workers,
+                              batch_size=args.batch_size, shuffle=True, drop_last=True)
+    test_loader = DataLoader(test_set, num_workers=args.workers,
+                             batch_size=args.batch_size // 2, shuffle=False, drop_last=False)
+    return train_loader, test_loader
 
 
 def main():
@@ -119,10 +159,7 @@ def main():
         optimizer_dict = checkpoint['optimizer']
 
     printf('==> Preparing data..')
-    train_loader = DataLoader(ModelNet40(partition='train', num_points=args.num_points), num_workers=args.workers,
-                              batch_size=args.batch_size, shuffle=True, drop_last=True)
-    test_loader = DataLoader(ModelNet40(partition='test', num_points=args.num_points), num_workers=args.workers,
-                             batch_size=args.batch_size // 2, shuffle=False, drop_last=False)
+    train_loader, test_loader = build_dataloaders(args)
 
     optimizer = torch.optim.SGD(net.parameters(), lr=args.learning_rate, momentum=0.9, weight_decay=args.weight_decay)
     if optimizer_dict is not None:
