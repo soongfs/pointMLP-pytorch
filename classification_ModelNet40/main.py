@@ -47,6 +47,8 @@ def parse_args():
                         help='return xyz+normal channels for txt data; official pointMLP should leave this false')
     parser.add_argument('--normalize', action='store_true',
                         help='center xyz and scale each txt sample to unit sphere')
+    parser.add_argument('--preload', action='store_true',
+                        help='preload txt point clouds into RAM for faster repeated epochs')
     return parser.parse_args()
 
 
@@ -62,6 +64,7 @@ def build_dataloaders(args):
             split_ratio=args.split_ratio,
             use_normals=args.use_normals,
             normalize=args.normalize,
+            preload=args.preload,
         )
         test_set = CourseModelNet40(
             args.data_root,
@@ -70,6 +73,7 @@ def build_dataloaders(args):
             split_ratio=args.split_ratio,
             use_normals=args.use_normals,
             normalize=args.normalize,
+            preload=args.preload,
             augment=False,
         )
     train_loader = DataLoader(train_set, num_workers=args.workers,

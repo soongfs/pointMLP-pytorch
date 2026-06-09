@@ -35,6 +35,14 @@ def make_fixture() -> Path:
         for i in range(5):
             write_txt(class_dir / f"{class_name}_{i:04d}.txt", rows=20 + i)
     (root / "modelnet40_shape_names.txt").write_text("airplane\nchair\n", encoding="utf-8")
+    (root / "modelnet40_train.txt").write_text(
+        "airplane_0000\nairplane_0001\nairplane_0002\nchair_0000\nchair_0001\nchair_0002\n",
+        encoding="utf-8",
+    )
+    (root / "modelnet40_test.txt").write_text(
+        "airplane_0003\nairplane_0004\nchair_0003\nchair_0004\n",
+        encoding="utf-8",
+    )
     return tmp
 
 
@@ -46,8 +54,8 @@ def test_labeled_dataset_split_and_shapes() -> None:
 
         train = CourseModelNet40(tmp, split="train", num_points=16, split_ratio=0.8, augment=False)
         test = CourseModelNet40(tmp, split="test", num_points=16, split_ratio=0.8)
-        assert len(train) == 8
-        assert len(test) == 2
+        assert len(train) == 6
+        assert len(test) == 4
 
         points, label = train[0]
         assert tuple(points.shape) == (16, 3)
@@ -57,6 +65,12 @@ def test_labeled_dataset_split_and_shapes() -> None:
         normals = CourseModelNet40(tmp, split="all", num_points=16, use_normals=True, augment=False)
         points6, _ = normals[0]
         assert tuple(points6.shape) == (16, 6)
+
+        preloaded = CourseModelNet40(tmp, split="train", num_points=16, preload=True, augment=False)
+        assert preloaded._cache is not None
+        assert len(preloaded._cache) == len(preloaded)
+        cached_points, _ = preloaded[0]
+        assert tuple(cached_points.shape) == (16, 3)
     finally:
         shutil.rmtree(tmp)
 

@@ -27,6 +27,7 @@ _METADATA_NAMES = {
 class LabeledSample:
     path: str
     label: int
+    sample_id: str
     zip_member: Optional[str] = None
 
 
@@ -58,7 +59,8 @@ def discover_labeled_samples(root: str | os.PathLike[str]) -> List[LabeledSample
                 parts = member.split("/")
                 for class_name in MODELNET40_CLASSES:
                     if class_name in parts:
-                        samples.append(LabeledSample(str(root_path), CLASS_TO_IDX[class_name], member))
+                        sample_id = os.path.splitext(os.path.basename(member))[0]
+                        samples.append(LabeledSample(str(root_path), CLASS_TO_IDX[class_name], sample_id, member))
                         break
     else:
         dataset_root = _find_dataset_root(root)
@@ -69,10 +71,36 @@ def discover_labeled_samples(root: str | os.PathLike[str]) -> List[LabeledSample
             for path in sorted(class_dir.glob("*.txt")):
                 if path.name in _METADATA_NAMES:
                     continue
-                samples.append(LabeledSample(str(path), CLASS_TO_IDX[class_name]))
+                samples.append(LabeledSample(str(path), CLASS_TO_IDX[class_name], path.stem))
     if not samples:
         raise RuntimeError(f"no labeled ModelNet40 txt samples found under: {root}")
     return samples
+
+
+def _read_split_ids(dataset_root: Path, split: str) -> Optional[set[str]]:
+    split = split.lower()
+    if split in {"val", "valid", "validation"}:
+        split = "test"
+    if split not in {"train", "test"}:
+        return None
+    split_file = dataset_root / f"modelnet40_{split}.txt"
+    if not split_file.is_file():
+        return None
+    with split_file.open("r", encoding="utf-8") as f:
+        ids = {line.strip() for line in f if line.strip()}
+    return ids or None
+
+
+def split_samples_by_file(
+    samples: List[LabeledSample],
+    dataset_root: Path,
+    split: str,
+) -> Optional[List[LabeledSample]]:
+    split_ids = _read_split_ids(dataset_root, split)
+    if split_ids is None:
+        return None
+    selected = [sample for sample in samples if sample.sample_id in split_ids]
+    return selected or None
 
 
 def split_samples(
@@ -162,6 +190,7 @@ class CourseModelNet40(Dataset):
         split_ratio: float = 0.8,
         use_normals: bool = False,
         normalize: bool = False,
+        preload: bool = False,
         augment: bool | None = None,
     ) -> None:
         self.root = str(root)
@@ -171,18 +200,23 @@ class CourseModelNet40(Dataset):
         self.split_ratio = float(split_ratio)
         self.use_normals = bool(use_normals)
         self.normalize = bool(normalize)
+        self.preload = bool(preload)
         self.augment = (self.split == "train") if augment is None else bool(augment)
         all_samples = discover_labeled_samples(root)
-        self.samples = split_samples(all_samples, self.split, self.split_ratio)
+        split_by_file = split_samples_by_file(all_samples, Path(self.dataset_root), self.split)
+        self.samples = split_by_file if split_by_file is not None else split_samples(all_samples, self.split, self.split_ratio)
         if not self.samples:
             raise RuntimeError(f"empty {split} split under: {root}")
+        self._cache: Optional[List[np.ndarray]] = None
+        if self.preload:
+            self._cache = [load_txt_points(sample) for sample in self.samples]
 
     def __len__(self) -> int:
         return len(self.samples)
 
     def __getitem__(self, index: int) -> Tuple[torch.Tensor, torch.Tensor]:
         sample = self.samples[index]
-        points = load_txt_points(sample)
+        points = self._cache[index] if self._cache is not None else load_txt_points(sample)
         if self.normalize:
             points = normalize_unit_sphere(points)
         points = random_resample(points, self.num_points) if self.augment else deterministic_resample(points, self.num_points)
