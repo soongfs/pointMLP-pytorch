@@ -8,6 +8,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+uv pip install setuptools wheel
 uv pip install --no-build-isolation ./pointnet2_ops_lib
 
 uv run python - <<'PY'
