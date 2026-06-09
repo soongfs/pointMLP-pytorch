@@ -56,7 +56,7 @@ def main() -> None:
         repo_id=args.repo_id,
         repo_type="dataset",
         local_dir=str(output),
-        allow_patterns="*.txt",
+        allow_patterns=["*.txt", "*.tar.gz", "*.zip"],
         max_workers=1,
     )
     print(f"Done: {output}")
