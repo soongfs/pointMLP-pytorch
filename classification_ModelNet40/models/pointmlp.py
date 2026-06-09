@@ -6,7 +6,10 @@ import torch.nn.functional as F
 # from einops import rearrange, repeat
 
 
-from pointnet2_ops import pointnet2_utils
+try:
+    from pointnet2_ops import pointnet2_utils
+except ImportError:
+    pointnet2_utils = None
 
 
 def get_activation(activation):
@@ -158,7 +161,10 @@ class LocalGrouper(nn.Module):
 
         # fps_idx = torch.multinomial(torch.linspace(0, N - 1, steps=N).repeat(B, 1).to(xyz.device), num_samples=self.groups, replacement=False).long()
         # fps_idx = farthest_point_sample(xyz, self.groups).long()
-        fps_idx = pointnet2_utils.furthest_point_sample(xyz, self.groups).long()  # [B, npoint]
+        if pointnet2_utils is not None:
+            fps_idx = pointnet2_utils.furthest_point_sample(xyz, self.groups).long()  # [B, npoint]
+        else:
+            fps_idx = farthest_point_sample(xyz, self.groups).long()  # [B, npoint]
         new_xyz = index_points(xyz, fps_idx)  # [B, npoint, 3]
         new_points = index_points(points, fps_idx)  # [B, npoint, d]
 
