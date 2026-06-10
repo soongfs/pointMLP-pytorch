@@ -21,7 +21,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from course_data import CourseTestDataset
+from course_data import CourseTestDataset, deterministic_resample
 from modelnet40_classes import class_name
 
 
@@ -33,7 +33,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", required=True, help="submission CSV path")
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--num_points", type=int, default=1024)
-    parser.add_argument("--num_votes", type=int, default=1, help="repeat deterministic inference and average probabilities")
+    parser.add_argument("--num_votes", type=int, default=1, help="average predictions across point resampling votes")
+    parser.add_argument(
+        "--vote_sampling",
+        choices=["deterministic", "random"],
+        default="deterministic",
+        help="deterministic reuses the dataset sample; random resamples points per vote",
+    )
     parser.add_argument("--use_normals", action="store_true", help="pass xyz+normal channels if the model supports 6D input")
     parser.add_argument("--normalize", action="store_true", help="center xyz and scale each sample to unit sphere")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
@@ -76,17 +82,48 @@ def collate_batch(batch: List[Tuple[str, torch.Tensor]]) -> Tuple[List[str], tor
     return sample_ids, points
 
 
-def predict(model: torch.nn.Module, loader: DataLoader, device: torch.device, num_votes: int) -> List[Tuple[str, str]]:
+def random_resample_tensor(points: torch.Tensor, num_points: int) -> torch.Tensor:
+    """Randomly resample a batch of B,N,C tensors to B,num_points,C."""
+    batch_size, point_count, _ = points.shape
+    if point_count == num_points:
+        return points
+    samples = []
+    for batch_idx in range(batch_size):
+        if point_count > num_points:
+            idx = torch.randperm(point_count, device=points.device)[:num_points]
+        else:
+            idx = torch.randint(0, point_count, (num_points,), device=points.device)
+        samples.append(points[batch_idx, idx])
+    return torch.stack(samples, dim=0)
+
+
+def predict(
+    model: torch.nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    num_votes: int,
+    vote_sampling: str = "deterministic",
+    num_points: int = 1024,
+) -> List[Tuple[str, str]]:
     results: List[Tuple[str, str]] = []
     votes = max(1, int(num_votes))
     with torch.no_grad():
         for sample_ids, points in loader:
             points = points.to(device, non_blocking=True)
-            # PointMLP expects (B, C, N). Official ModelNet40 PointMLP consumes xyz.
-            points = points.permute(0, 2, 1).contiguous()
             probs_sum = torch.zeros(points.shape[0], 40, device=device)
-            for _ in range(votes):
-                logits = model(points)
+            for vote_idx in range(votes):
+                vote_points = points
+                if vote_sampling == "random":
+                    vote_points = random_resample_tensor(points, num_points)
+                elif vote_idx == 0 and points.shape[1] != num_points:
+                    # Defensive path for custom collators; CourseTestDataset already resamples.
+                    vote_points = torch.as_tensor(
+                        deterministic_resample(points.cpu().numpy(), num_points),
+                        device=device,
+                        dtype=points.dtype,
+                    )
+                # PointMLP expects (B, C, N). Official ModelNet40 PointMLP consumes xyz.
+                logits = model(vote_points.permute(0, 2, 1).contiguous())
                 probs_sum = probs_sum + F.softmax(logits, dim=1)
             probs = probs_sum / votes
             pred_indices = probs.argmax(dim=1).detach().cpu().tolist()
@@ -113,6 +150,7 @@ def main() -> None:
         num_points=args.num_points,
         use_normals=args.use_normals,
         normalize=args.normalize,
+        resample=args.vote_sampling != "random",
     )
     loader = DataLoader(
         dataset,
@@ -131,7 +169,7 @@ def main() -> None:
     else:
         print("Dry run: checkpoint loading skipped")
 
-    rows = predict(model, loader, device, args.num_votes)
+    rows = predict(model, loader, device, args.num_votes, args.vote_sampling, args.num_points)
     write_csv(args.output, rows, header=args.header)
     print(f"Wrote {len(rows)} predictions to {args.output}")
     if rows:

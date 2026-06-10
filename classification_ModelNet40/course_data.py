@@ -41,6 +41,27 @@ class PointCloudSample:
     zip_member: Optional[str] = None
 
 
+def _looks_like_point_file(path: str) -> bool:
+    try:
+        if path.endswith(".npy"):
+            return True
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                delimiter = "," if "," in line else None
+                parts = line.split(delimiter) if delimiter else line.split()
+                if len(parts) < 3:
+                    return False
+                for value in parts[:3]:
+                    float(value)
+                return True
+    except (OSError, ValueError):
+        return False
+    return False
+
+
 def _is_supported_sample(path: str) -> bool:
     name = os.path.basename(path)
     suffix = os.path.splitext(name)[1].lower()
@@ -65,7 +86,7 @@ def _discover_dir(root: Path) -> List[PointCloudSample]:
         dirnames[:] = [d for d in dirnames if d not in {".cache", "__MACOSX"}]
         for filename in filenames:
             full_path = Path(dirpath) / filename
-            if _is_supported_sample(str(full_path)):
+            if _is_supported_sample(str(full_path)) and _looks_like_point_file(str(full_path)):
                 samples.append(
                     PointCloudSample(
                         sample_id=_sample_id_from_path(filename),
@@ -113,7 +134,10 @@ def _load_text_from_bytes(raw: bytes) -> np.ndarray:
     delimiter = "," if "," in text.splitlines()[0] else None
     from io import StringIO
 
-    return np.loadtxt(StringIO(text), delimiter=delimiter, dtype=np.float32)
+    try:
+        return np.loadtxt(StringIO(text), delimiter=delimiter, dtype=np.float32)
+    except ValueError as exc:
+        raise ValueError("not a numeric point-cloud text file") from exc
 
 
 def _load_array(sample: PointCloudSample) -> np.ndarray:
@@ -134,7 +158,10 @@ def _load_array(sample: PointCloudSample) -> np.ndarray:
         return np.loadtxt(sample.path, delimiter=delimiter, dtype=np.float32)
     except ValueError:
         # ModelNet txt files are comma-separated even when the suffix is .txt.
-        return np.loadtxt(sample.path, delimiter=",", dtype=np.float32)
+        try:
+            return np.loadtxt(sample.path, delimiter=",", dtype=np.float32)
+        except ValueError as exc:
+            raise ValueError(f"not a numeric point-cloud file: {sample.path}") from exc
 
 
 def normalize_unit_sphere(points: np.ndarray) -> np.ndarray:
@@ -175,11 +202,13 @@ class CourseTestDataset(Dataset):
         num_points: int = 1024,
         use_normals: bool = False,
         normalize: bool = False,
+        resample: bool = True,
     ) -> None:
         self.root = str(root)
         self.num_points = int(num_points)
         self.use_normals = bool(use_normals)
         self.normalize = bool(normalize)
+        self.resample = bool(resample)
         self.samples = discover_samples(root)
 
     def __len__(self) -> int:
@@ -194,7 +223,8 @@ class CourseTestDataset(Dataset):
             )
         if self.normalize:
             points = normalize_unit_sphere(points)
-        points = deterministic_resample(points, self.num_points)
+        if self.resample:
+            points = deterministic_resample(points, self.num_points)
         channels = 6 if self.use_normals and points.shape[1] >= 6 else 3
         points = points[:, :channels].astype(np.float32, copy=False)
         return sample.sample_id, torch.from_numpy(points)
