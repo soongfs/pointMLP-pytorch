@@ -56,7 +56,7 @@ def test_dataset_reads_directory_and_predicts_csv() -> None:
         assert tuple(points.shape) == (16, 3)
 
         loader = torch.utils.data.DataLoader(dataset, batch_size=2, collate_fn=collate_batch)
-        rows = predict(ConstantModel(), loader, torch.device("cpu"), num_votes=1)
+        rows = predict([ConstantModel()], loader, torch.device("cpu"), num_votes=1)
         assert rows == [("chair_0001", "chair"), ("chair_0002", "chair")]
 
         output = tmp / "result.csv"

@@ -6,6 +6,7 @@ This is for local validation of voting strategies before onsite submission.
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 from typing import List, Tuple
 
 import numpy as np
@@ -23,7 +24,7 @@ from course_train_data import (
     split_samples,
     split_samples_by_file,
 )
-from predict_course import build_model, load_checkpoint_state, random_resample_tensor
+from predict_course import load_models, random_resample_tensor
 
 
 class LabeledEvalDataset(Dataset):
@@ -47,7 +48,7 @@ class LabeledEvalDataset(Dataset):
             augment=False,
         )
         all_samples = discover_labeled_samples(root)
-        split_by_file = split_samples_by_file(all_samples, __import__("pathlib").Path(base.dataset_root), split)
+        split_by_file = split_samples_by_file(all_samples, Path(base.dataset_root), split)
         self.samples = split_by_file if split_by_file is not None else split_samples(all_samples, split, split_ratio)
         self.num_points = int(num_points)
         self.use_normals = bool(use_normals)
@@ -72,7 +73,12 @@ class LabeledEvalDataset(Dataset):
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser("Evaluate course PointMLP checkpoint")
     parser.add_argument("--model", default="pointMLP")
-    parser.add_argument("--checkpoint", required=True)
+    parser.add_argument(
+        "--checkpoint",
+        required=True,
+        action="append",
+        help="path to .pth checkpoint; repeat for multi-seed ensemble",
+    )
     parser.add_argument("--data_root", required=True)
     parser.add_argument("--split", default="test", choices=["train", "test", "val", "all"])
     parser.add_argument("--batch_size", type=int, default=32)
@@ -107,11 +113,10 @@ def main() -> None:
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=0, collate_fn=collate)
     print(f"Loaded {len(dataset)} labeled samples from {args.data_root} split={args.split}")
 
-    model = build_model(args.model, device)
-    model.load_state_dict(load_checkpoint_state(args.checkpoint), strict=True)
-    model.eval()
+    models_list = load_models(args.model, args.checkpoint, device)
 
     votes = max(1, int(args.num_votes))
+    model_count = max(1, len(models_list))
     y_true: List[int] = []
     y_pred: List[int] = []
     with torch.no_grad():
@@ -123,9 +128,11 @@ def main() -> None:
                 vote_points = points
                 if args.vote_sampling == "random":
                     vote_points = random_resample_tensor(points, args.num_points)
-                logits = model(vote_points.permute(0, 2, 1).contiguous())
-                probs_sum += F.softmax(logits, dim=1)
-            preds = (probs_sum / votes).argmax(dim=1)
+                model_input = vote_points.permute(0, 2, 1).contiguous()
+                for model in models_list:
+                    logits = model(model_input)
+                    probs_sum += F.softmax(logits, dim=1)
+            preds = (probs_sum / (votes * model_count)).argmax(dim=1)
             y_true.extend(labels.detach().cpu().tolist())
             y_pred.extend(preds.detach().cpu().tolist())
 

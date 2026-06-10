@@ -28,7 +28,12 @@ from modelnet40_classes import class_name
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser("BUPT ModelNet40 course prediction")
     parser.add_argument("--model", default="pointMLP", help="model factory name in models/__init__.py")
-    parser.add_argument("--checkpoint", required=True, help="path to .pth checkpoint")
+    parser.add_argument(
+        "--checkpoint",
+        required=True,
+        action="append",
+        help="path to .pth checkpoint; repeat for multi-seed ensemble",
+    )
     parser.add_argument("--test_dir", required=True, help="directory or .zip containing onsite samples")
     parser.add_argument("--output", required=True, help="submission CSV path")
     parser.add_argument("--batch_size", type=int, default=32)
@@ -76,6 +81,20 @@ def build_model(model_name: str, device: torch.device) -> torch.nn.Module:
     return model
 
 
+def load_models(model_name: str, checkpoint_paths: List[str], device: torch.device, dry_run: bool = False) -> List[torch.nn.Module]:
+    models_list: List[torch.nn.Module] = []
+    for checkpoint_path in checkpoint_paths:
+        model = build_model(model_name, device)
+        if not dry_run:
+            state_dict = load_checkpoint_state(checkpoint_path)
+            model.load_state_dict(state_dict, strict=True)
+            print(f"Loaded checkpoint: {checkpoint_path}")
+        models_list.append(model)
+    if dry_run:
+        print("Dry run: checkpoint loading skipped")
+    return models_list
+
+
 def collate_batch(batch: List[Tuple[str, torch.Tensor]]) -> Tuple[List[str], torch.Tensor]:
     sample_ids = [item[0] for item in batch]
     points = torch.stack([item[1] for item in batch], dim=0)
@@ -98,7 +117,7 @@ def random_resample_tensor(points: torch.Tensor, num_points: int) -> torch.Tenso
 
 
 def predict(
-    model: torch.nn.Module,
+    models_list: List[torch.nn.Module],
     loader: DataLoader,
     device: torch.device,
     num_votes: int,
@@ -107,25 +126,27 @@ def predict(
 ) -> List[Tuple[str, str]]:
     results: List[Tuple[str, str]] = []
     votes = max(1, int(num_votes))
+    model_count = max(1, len(models_list))
     with torch.no_grad():
         for sample_ids, points in loader:
             points = points.to(device, non_blocking=True)
             probs_sum = torch.zeros(points.shape[0], 40, device=device)
-            for vote_idx in range(votes):
+            for _ in range(votes):
                 vote_points = points
                 if vote_sampling == "random":
                     vote_points = random_resample_tensor(points, num_points)
-                elif vote_idx == 0 and points.shape[1] != num_points:
+                elif points.shape[1] != num_points:
                     # Defensive path for custom collators; CourseTestDataset already resamples.
                     vote_points = torch.as_tensor(
                         deterministic_resample(points.cpu().numpy(), num_points),
                         device=device,
                         dtype=points.dtype,
                     )
-                # PointMLP expects (B, C, N). Official ModelNet40 PointMLP consumes xyz.
-                logits = model(vote_points.permute(0, 2, 1).contiguous())
-                probs_sum = probs_sum + F.softmax(logits, dim=1)
-            probs = probs_sum / votes
+                model_input = vote_points.permute(0, 2, 1).contiguous()
+                for model in models_list:
+                    logits = model(model_input)
+                    probs_sum = probs_sum + F.softmax(logits, dim=1)
+            probs = probs_sum / (votes * model_count)
             pred_indices = probs.argmax(dim=1).detach().cpu().tolist()
             results.extend((sample_id, class_name(label_idx)) for sample_id, label_idx in zip(sample_ids, pred_indices))
     return results
@@ -161,15 +182,9 @@ def main() -> None:
     )
     print(f"Loaded {len(dataset)} samples from {args.test_dir}")
 
-    model = build_model(args.model, device)
-    if not args.dry_run:
-        state_dict = load_checkpoint_state(args.checkpoint)
-        model.load_state_dict(state_dict, strict=True)
-        print(f"Loaded checkpoint: {args.checkpoint}")
-    else:
-        print("Dry run: checkpoint loading skipped")
+    models_list = load_models(args.model, args.checkpoint, device, args.dry_run)
 
-    rows = predict(model, loader, device, args.num_votes, args.vote_sampling, args.num_points)
+    rows = predict(models_list, loader, device, args.num_votes, args.vote_sampling, args.num_points)
     write_csv(args.output, rows, header=args.header)
     print(f"Wrote {len(rows)} predictions to {args.output}")
     if rows:
