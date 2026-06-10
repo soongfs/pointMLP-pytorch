@@ -28,6 +28,7 @@ _METADATA_NAMES = {
     "modelnet40_train.txt",
     "modelnet40_test.txt",
 }
+_METADATA_PREFIXES = ("shape_names",)
 _SUPPORTED_SUFFIXES = {".txt", ".csv", ".npy"}
 
 
@@ -43,7 +44,15 @@ class PointCloudSample:
 def _is_supported_sample(path: str) -> bool:
     name = os.path.basename(path)
     suffix = os.path.splitext(name)[1].lower()
-    return suffix in _SUPPORTED_SUFFIXES and name not in _METADATA_NAMES
+    if suffix not in _SUPPORTED_SUFFIXES or name in _METADATA_NAMES:
+        return False
+    stem = os.path.splitext(name)[0]
+    if stem.startswith(_METADATA_PREFIXES):
+        return False
+    parent = os.path.basename(os.path.dirname(path))
+    if parent in {".cache", "download", "downloads", "__MACOSX"}:
+        return False
+    return True
 
 
 def _sample_id_from_path(path: str) -> str:
@@ -52,7 +61,8 @@ def _sample_id_from_path(path: str) -> str:
 
 def _discover_dir(root: Path) -> List[PointCloudSample]:
     samples: List[PointCloudSample] = []
-    for dirpath, _, filenames in os.walk(root):
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in {".cache", "__MACOSX"}]
         for filename in filenames:
             full_path = Path(dirpath) / filename
             if _is_supported_sample(str(full_path)):

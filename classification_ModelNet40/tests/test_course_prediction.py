@@ -44,6 +44,10 @@ def test_dataset_reads_directory_and_predicts_csv() -> None:
         write_txt(data_dir / "chair_0001.txt", rows=10, delimiter=",")
         np.save(data_dir / "chair_0002.npy", np.ones((5, 6), dtype=np.float32))
         (tmp / "modelnet40_normal_resampled" / "modelnet40_shape_names.txt").write_text("chair\n", encoding="utf-8")
+        (tmp / "modelnet40_normal_resampled" / "shape_names.txt").write_text("bathtub\n", encoding="utf-8")
+        cache_dir = tmp / "modelnet40_normal_resampled" / ".cache" / "huggingface" / "download"
+        cache_dir.mkdir(parents=True)
+        (cache_dir / "cached.txt").write_text("bathtub\n", encoding="utf-8")
 
         dataset = CourseTestDataset(tmp, num_points=16)
         assert len(dataset) == 2
