@@ -128,3 +128,18 @@ dmypy.json
 # Pyre type checker
 .pyre/
 .DS_Store
+
+# === BUPT course project ===
+# 数据集（体积大，单独下载）
+classification_ModelNet40/data/
+# 训练权重（单独打包交付，不进 git）
+classification_ModelNet40/checkpoints/
+# 老师数据包与作业说明
+modelnet40_train_data.zip
+TASK
+# 预测输出
+*.csv
+# 交付打包目录（报告/权重/PDF 单独提交，不进 git）
+submission/
+# uv 虚拟环境
+.venv/

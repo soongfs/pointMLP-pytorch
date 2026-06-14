@@ -1,5 +1,16 @@
 # Rethinking Network Design and Local Geometry in Point Cloud: A Simple Residual MLP Framework （ICLR 2022）
 
+> **BUPT 机器学习课程作业（赛道一：ModelNet40 三维点云分类）说明**
+>
+> 本仓库 fork 自 [ma-xu/pointMLP-pytorch](https://github.com/ma-xu/pointMLP-pytorch)，
+> 在保留官方 PointMLP 架构的前提下，新增了对课程 normal-resampled txt 数据格式的训练、
+> 评估与现场预测能力。课程相关的完整说明、复现步骤与实验结果见
+> **[README_BUPT.md](README_BUPT.md)**。
+>
+> 下面是 PointMLP 原始项目说明，未作改动。
+
+---
+
 
 
 [![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/rethinking-network-design-and-local-geometry-1/3d-point-cloud-classification-on-modelnet40)](https://paperswithcode.com/sota/3d-point-cloud-classification-on-modelnet40?p=rethinking-network-design-and-local-geometry-1)
