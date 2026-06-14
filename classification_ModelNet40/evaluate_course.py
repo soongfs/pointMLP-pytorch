@@ -114,13 +114,20 @@ def main() -> None:
     print(f"Loaded {len(dataset)} labeled samples from {args.data_root} split={args.split}")
 
     models_list = load_models(args.model, args.checkpoint, device)
+    print(f"Device: {device} | models: {len(models_list)} | votes: {args.num_votes} ({args.vote_sampling})")
+
+    try:
+        from tqdm import tqdm
+        iterator = tqdm(loader, desc="eval", unit="batch")
+    except ImportError:
+        iterator = loader
 
     votes = max(1, int(args.num_votes))
     model_count = max(1, len(models_list))
     y_true: List[int] = []
     y_pred: List[int] = []
     with torch.no_grad():
-        for points, labels in loader:
+        for points, labels in iterator:
             points = points.to(device, non_blocking=True)
             labels = labels.to(device, non_blocking=True)
             probs_sum = torch.zeros(points.shape[0], 40, device=device)

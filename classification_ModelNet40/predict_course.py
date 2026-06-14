@@ -127,8 +127,13 @@ def predict(
     results: List[Tuple[str, str]] = []
     votes = max(1, int(num_votes))
     model_count = max(1, len(models_list))
+    try:
+        from tqdm import tqdm
+        iterator = tqdm(loader, desc="predict", unit="batch")
+    except ImportError:
+        iterator = loader
     with torch.no_grad():
-        for sample_ids, points in loader:
+        for sample_ids, points in iterator:
             points = points.to(device, non_blocking=True)
             probs_sum = torch.zeros(points.shape[0], 40, device=device)
             for _ in range(votes):
